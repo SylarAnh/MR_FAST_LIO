@@ -100,6 +100,8 @@ vector<BoxPointType> cub_needrm;
 vector<PointVector>  Nearest_Points; 
 vector<double>       extrinT(3, 0.0);
 vector<double>       extrinR(9, 0.0);
+vector<double> initT(3, 0.0);
+vector<double> initR(9, 0.0);
 deque<double>                     time_buffer;
 deque<PointCloudXYZI::Ptr>        lidar_buffer;
 deque<sensor_msgs::Imu::ConstPtr> imu_buffer;
@@ -124,6 +126,8 @@ V3D euler_cur;
 V3D position_last(Zero3d);
 V3D Lidar_T_wrt_IMU(Zero3d);
 M3D Lidar_R_wrt_IMU(Eye3d);
+V3D Init_T_wrt_IMU(Zero3d);
+M3D Init_R_wrt_IMU(Eye3d);
 
 /*** EKF inputs and output ***/
 MeasureGroup Measures;
@@ -580,14 +584,18 @@ void publish_map(const ros::Publisher & pubLaserCloudMap)
 template<typename T>
 void set_posestamp(T & out)
 {
-    out.pose.position.x = state_point.pos(0);
-    out.pose.position.y = state_point.pos(1);
-    out.pose.position.z = state_point.pos(2);
-    out.pose.orientation.x = geoQuat.x;
-    out.pose.orientation.y = geoQuat.y;
-    out.pose.orientation.z = geoQuat.z;
-    out.pose.orientation.w = geoQuat.w;
-    
+    vect3 pos_RTK;
+    SO3 rot_RTK;
+    pos_RTK = Init_R_wrt_IMU * state_point.pos + Init_T_wrt_IMU;
+    rot_RTK = Init_R_wrt_IMU * state_point.rot;
+
+    out.pose.position.x = pos_RTK(0);
+    out.pose.position.y = pos_RTK(1);
+    out.pose.position.z = pos_RTK(2);
+    out.pose.orientation.x = rot_RTK.coeffs()[0];
+    out.pose.orientation.y = rot_RTK.coeffs()[1];
+    out.pose.orientation.z = rot_RTK.coeffs()[2];
+    out.pose.orientation.w = rot_RTK.coeffs()[3];
 }
 
 void publish_odometry(const ros::Publisher & pubOdomAftMapped)
@@ -801,6 +809,8 @@ int main(int argc, char** argv)
     nh.param<int>("pcd_save/interval", pcd_save_interval, -1);
     nh.param<vector<double>>("mapping/extrinsic_T", extrinT, vector<double>());
     nh.param<vector<double>>("mapping/extrinsic_R", extrinR, vector<double>());
+    nh.param<vector<double>>("mapping/init_T", initT, vector<double>());
+    nh.param<vector<double>>("mapping/init_R", initR, vector<double>());
     cout<<"p_pre->lidar_type "<< p_pre->lidar_type <<endl;
     cout<<"deskew_enabled "<< deskew_enabled <<endl;
     cout<<"feature_extract_enable "<< p_pre->feature_enabled <<endl;
@@ -828,6 +838,8 @@ int main(int argc, char** argv)
 
     Lidar_T_wrt_IMU<<VEC_FROM_ARRAY(extrinT);
     Lidar_R_wrt_IMU<<MAT_FROM_ARRAY(extrinR);
+    Init_T_wrt_IMU << VEC_FROM_ARRAY(initT);
+    Init_R_wrt_IMU << MAT_FROM_ARRAY(initR);
     p_imu->set_deskew(deskew_enabled);
     p_imu->set_extrinsic(Lidar_T_wrt_IMU, Lidar_R_wrt_IMU);
     p_imu->set_gyr_cov(V3D(gyr_cov, gyr_cov, gyr_cov));

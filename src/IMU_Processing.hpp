@@ -306,7 +306,7 @@ void ImuProcess::UndistortPcl(const MeasureGroup &meas, esekfom::esekf<state_ikf
   last_lidar_end_time_ = pcl_end_time;
 
   if (deskew_enabled == false) return;
-  std::cout << "lidar_deskew" << std::endl;
+  // std::cout << "lidar_deskew" << std::endl;
   /*** undistort each lidar point (backward propagation) ***/
   if (pcl_out.points.begin() == pcl_out.points.end()) return;
   auto it_pcl = pcl_out.points.end() - 1;

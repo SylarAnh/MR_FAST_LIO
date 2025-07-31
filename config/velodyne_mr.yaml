@@ -28,6 +28,10 @@ mapping:
     extrinsic_R: [ 1, 0, 0, 
                    0, 1, 0, 
                    0, 0, 1]
+    init_T: [ 0 0 0]
+    init_R: [ 1,    0,    0,
+              0,    1,  0, 
+              0,   0,    1]
 
 publish:
     path_en:  false
