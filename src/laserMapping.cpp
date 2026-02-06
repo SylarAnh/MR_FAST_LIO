@@ -51,6 +51,7 @@
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
 #include <pcl/filters/voxel_grid.h>
+#include <pcl/filters/random_sample.h>
 #include <pcl/io/pcd_io.h>
 #include <sensor_msgs/PointCloud2.h>
 #include <tf/transform_datatypes.h>
@@ -61,7 +62,7 @@
 #include <ikd-Tree/ikd_Tree.h>
 
 #define INIT_TIME           (0.1)
-#define LASER_POINT_COV     (0.001)
+#define LASER_POINT_COV (0.001)
 #define MAXN                (720000)
 #define PUBFRAME_PERIOD     (20)
 
@@ -112,10 +113,12 @@ PointCloudXYZI::Ptr feats_down_body(new PointCloudXYZI());
 PointCloudXYZI::Ptr feats_down_world(new PointCloudXYZI());
 PointCloudXYZI::Ptr normvec(new PointCloudXYZI(100000, 1));
 PointCloudXYZI::Ptr laserCloudOri(new PointCloudXYZI(100000, 1));
+PointCloudXYZI::Ptr laserCloudW(new PointCloudXYZI(100000, 1));
 PointCloudXYZI::Ptr corr_normvect(new PointCloudXYZI(100000, 1));
 PointCloudXYZI::Ptr _featsArray;
 
 pcl::VoxelGrid<PointType> downSizeFilterSurf;
+pcl::RandomSample<PointType> rdownSizeFilterSurf;
 pcl::VoxelGrid<PointType> downSizeFilterMap;
 
 KD_TREE<PointType> ikdtree;
@@ -355,7 +358,7 @@ void imu_cbk(const sensor_msgs::Imu::ConstPtr &msg_in)
 
     if (timestamp < last_timestamp_imu)
     {
-        ROS_WARN("imu loop back, clear buffer");
+        ROS_WARN("%s imu loop back, clear buffer %lf < %lf", imu_topic.c_str(), timestamp, last_timestamp_imu);
         imu_buffer.clear();
     }
 
@@ -408,7 +411,7 @@ bool sync_packages(MeasureGroup &meas)
     /*** push imu data, and pop from imu buffer ***/
     double imu_time = imu_buffer.front()->header.stamp.toSec();
     meas.imu.clear();
-    while ((!imu_buffer.empty()) && (imu_time < lidar_end_time))
+    while ((!imu_buffer.empty()) && (imu_time < lidar_end_time) && ros::ok())
     {
         imu_time = imu_buffer.front()->header.stamp.toSec();
         if(imu_time > lidar_end_time) break;
@@ -562,8 +565,7 @@ void publish_effect_world(const ros::Publisher & pubLaserCloudEffect)
                     new PointCloudXYZI(effct_feat_num, 1));
     for (int i = 0; i < effct_feat_num; i++)
     {
-        RGBpointBodyToWorld(&laserCloudOri->points[i], \
-                            &laserCloudWorld->points[i]);
+        laserCloudWorld->points[i] = laserCloudW->points[i];
     }
     sensor_msgs::PointCloud2 laserCloudFullRes3;
     pcl::toROSMsg(*laserCloudWorld, laserCloudFullRes3);
@@ -693,7 +695,7 @@ void h_share_model(state_ikfom &s, esekfom::dyn_share_datastruct<double> &ekfom_
             float pd2 = pabcd(0) * point_world.x + pabcd(1) * point_world.y + pabcd(2) * point_world.z + pabcd(3);
             float s = 1 - 0.9 * fabs(pd2) / sqrt(p_body.norm());
 
-            if (s > 0.9)
+            // if (s > 0.9)
             {
                 point_selected_surf[i] = true;
                 normvec->points[i].x = pabcd(0);
@@ -718,12 +720,20 @@ void h_share_model(state_ikfom &s, esekfom::dyn_share_datastruct<double> &ekfom_
         }
     }
 
+    for (int i = 0; i < effct_feat_num; i++)
+    {
+        RGBpointBodyToWorld(&laserCloudOri->points[i],
+                            &laserCloudW->points[i]);
+    }
+
     if (effct_feat_num < 1)
     {
         ekfom_data.valid = false;
         ROS_WARN("No Effective Points! \n");
         return;
     }
+
+    // std::cout << "effct_feat_num: " << effct_feat_num << std::endl;
 
     res_mean_last = total_residual / effct_feat_num;
     match_time  += omp_get_wtime() - match_start;
@@ -928,8 +938,9 @@ int main(int argc, char** argv)
             lasermap_fov_segment();
 
             /*** downsample the feature points in a scan ***/
-            downSizeFilterSurf.setInputCloud(feats_undistort);
-            downSizeFilterSurf.filter(*feats_down_body);
+            rdownSizeFilterSurf.setSample(10000);
+            rdownSizeFilterSurf.setInputCloud(feats_undistort);
+            rdownSizeFilterSurf.filter(*feats_down_body);
             t1 = omp_get_wtime();
             feats_down_size = feats_down_body->points.size();
             /*** initialize the map kdtree ***/
@@ -963,10 +974,10 @@ int main(int argc, char** argv)
             feats_down_world->resize(feats_down_size);
 
             V3D ext_euler = SO3ToEuler(state_point.offset_R_L_I);
-            fout_pre<<setw(20)<<Measures.lidar_beg_time - first_lidar_time<<" "<<euler_cur.transpose()<<" "<< state_point.pos.transpose()<<" "<<ext_euler.transpose() << " "<<state_point.offset_T_L_I.transpose()<< " " << state_point.vel.transpose() \
-            <<" "<<state_point.bg.transpose()<<" "<<state_point.ba.transpose()<<" "<<state_point.grav<< endl;
+            fout_pre << setw(20) << Measures.lidar_beg_time - first_lidar_time << " | " << euler_cur.transpose() << " | " << state_point.pos.transpose() << " | " << ext_euler.transpose() << " | " << state_point.offset_T_L_I.transpose() << " | " << state_point.vel.transpose()
+                     << " " << state_point.bg.transpose() << " " << state_point.ba.transpose() << " " << state_point.grav << endl;
 
-            if(0) // If you need to see map point, change to "if(1)"
+            if (1) // If you need to see map point, change to "if(1)"
             {
                 PointVector ().swap(ikdtree.PCL_Storage);
                 ikdtree.flatten(ikdtree.Root_Node, ikdtree.PCL_Storage, NOT_RECORD);
@@ -1018,9 +1029,9 @@ int main(int argc, char** argv)
             }
             if (scan_pub_en || pcd_save_en)      publish_frame_world(pubLaserCloudFull);
             if (scan_pub_en && scan_body_pub_en) publish_frame_body(pubLaserCloudFull_body);
-            // publish_effect_world(pubLaserCloudEffect);
+            publish_effect_world(pubLaserCloudEffect);
             publish_deskew_local(pubLaserCloudDeskew);
-            // publish_map(pubLaserCloudMap);
+            publish_map(pubLaserCloudMap);
 
             /*** Debug variables ***/
             if (runtime_pos_log)
@@ -1047,8 +1058,8 @@ int main(int argc, char** argv)
                 time_log_counter ++;
                 printf("[ mapping ]: time: IMU + Map + Input Downsample: %0.6f ave match: %0.6f ave solve: %0.6f  ave ICP: %0.6f  map incre: %0.6f ave total: %0.6f icp: %0.6f construct H: %0.6f \n",t1-t0,aver_time_match,aver_time_solve,t3-t1,t5-t3,aver_time_consu,aver_time_icp, aver_time_const_H_time);
                 ext_euler = SO3ToEuler(state_point.offset_R_L_I);
-                fout_out << setw(20) << Measures.lidar_beg_time - first_lidar_time << " " << euler_cur.transpose() << " " << state_point.pos.transpose()<< " " << ext_euler.transpose() << " "<<state_point.offset_T_L_I.transpose()<<" "<< state_point.vel.transpose() \
-                <<" "<<state_point.bg.transpose()<<" "<<state_point.ba.transpose()<<" "<<state_point.grav<<" "<<feats_undistort->points.size()<<endl;
+                fout_out << setw(20) << Measures.lidar_beg_time - first_lidar_time << " | " << euler_cur.transpose() << " | " << state_point.pos.transpose() << " | " << ext_euler.transpose() << " | " << state_point.offset_T_L_I.transpose() << " | " << state_point.vel.transpose()
+                         << " " << state_point.bg.transpose() << " " << state_point.ba.transpose() << " " << state_point.grav << " " << feats_undistort->points.size() << endl;
                 dump_lio_state_to_log(fp);
             }
         }
